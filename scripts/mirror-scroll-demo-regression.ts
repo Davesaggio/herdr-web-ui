@@ -7,6 +7,7 @@ import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { appFaces } from "./app-faces.ts";
 
 interface Frame { type: string; pane_id?: string; text?: string; mode?: string }
 interface MirrorFixture {
@@ -101,6 +102,7 @@ try {
           page.on("pageerror", (error) => errors.push(error.message));
           await page.goto(`http://127.0.0.1:${server.port}${prefix}?pane=${encodeURIComponent(pane)}&view=terminal&history=${kind}`);
           await page.locator(".conn-live").waitFor();
+          await appFaces(page);
           await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.reads > 0);
           await page.locator(".pane-frame.is-current .pane-terminal[data-adopted-grid]").waitFor();
           await settled(page);
@@ -154,7 +156,9 @@ try {
 
           // A fixed grid taller than the phone still reveals its clipped rows locally first.
           await terminal.evaluate((node: HTMLElement) => { node.style.height = "200px"; node.style.maxHeight = "200px"; node.style.flex = "none"; node.scrollTop = 80; });
-          await settled(page);
+          // ResizeObserver follows the cursor after its resize debounce, not after two paint frames.
+          // Wait for that adjustment before placing the grid between its local edges for the wheel.
+          await page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop !== 80);
           await terminal.evaluate((node) => { node.scrollTop = 80; });
           assert.equal(await terminal.evaluate((node) => node.scrollTop), 80, "the oversized grid starts between its local edges");
           const beforePan = await state(page);
