@@ -19,7 +19,6 @@ interface Props {
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
   lineScroll?: { current: ((lines: number) => void) | null };
   onApplicationPage?: (direction: -1 | 1) => void;
-  onApplicationScroll?: (lines: number) => void;
   enabled: boolean;
   interactive: boolean;
   search: TerminalSearchState | null;
@@ -30,7 +29,7 @@ interface Props {
 /** how long a page asked for on stale metrics waits for the read that tells history from a program's screen */
 const HELD_PAGE_MS = 1000;
 
-export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageScroll, lineScroll, onApplicationPage, onApplicationScroll, enabled, interactive, search, onError }: Props) {
+export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageScroll, lineScroll, onApplicationPage, enabled, interactive, search, onError }: Props) {
   const t = useT();
   const api = useMachineApi();
   const layer = useRef<HTMLDivElement>(null);
@@ -216,10 +215,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     const scrollLines = (lines: number) => {
       if (!interactive || !alive || viewportIntent.isSearching() || !showing()) return;
       const metrics = scrollRef.current;
-      if (validScroll(metrics) && (metrics.max_offset_from_bottom > 0 || metricsOutput === outputVersion)) {
-        if (metrics.max_offset_from_bottom === 0) onApplicationScroll?.(lines);
-        else writeRef.current((previewRef.current ?? metrics.offset_from_bottom) + lines);
-      } else {
+      if (validScroll(metrics)) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) + lines);
+      else {
         heldLines = { lines: (heldLines && Date.now() - heldLines.at < HELD_PAGE_MS ? heldLines.lines : 0) + lines, at: Date.now() };
         dirty = true; idle = 0; schedule(0);
       }
@@ -257,7 +254,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       document.removeEventListener("visibilitychange", visibility);
       refreshRef.current = () => {}; writeRef.current = () => {};
     };
-  }, [terminal, paneId, enabled, interactive, query, api, t, viewportIntent, pageScroll, lineScroll, onApplicationPage, onApplicationScroll]);
+  }, [terminal, paneId, enabled, interactive, query, api, t, viewportIntent, pageScroll, lineScroll, onApplicationPage]);
 
   useEffect(() => { refreshRef.current(); }, [search?.result]);
   return <div ref={layer} className="terminal-viewport-tools" aria-hidden={!enabled || undefined}>

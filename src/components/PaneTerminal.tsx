@@ -2762,18 +2762,6 @@ export function PaneTerminal({
     return () => window.removeEventListener("keydown", onPage, true);
   }, [active, paneId]);
 
-  const sendApplicationScroll = useCallback((lines: number) => {
-    const pane = paneRef.current, socket = socketRef.current;
-    if (agent !== "pi" || !fixedGridRef.current || lines === 0 || !pane || !socket?.connected
-        || !activeRef.current || !presentedRef.current || !shownRef.current || chatViewRef.current || modalOpen()
-        || observeRef.current || followRef.current || heldRef.current || endedRef.current || releasedRef.current || secretRef.current !== null
-        || composingRef.current || compositionCommitPendingRef.current) return;
-    // Pi fullscreen owns its transcript, not herdr's empty alternate-screen history.
-    // Row 1 targets the transcript rather than Pi's editor at the bottom of the grid.
-    const report = lines > 0 ? "\x1b[<64;1;1M" : "\x1b[<65;1;1M";
-    socket.sendInput(pane, report.repeat(Math.min(30, Math.ceil(Math.abs(lines) / HERDR_MOUSE_SCROLL_LINES))));
-  }, [agent]);
-
   const sendApplicationPage = useCallback((direction: -1 | 1) => {
     const pane = paneRef.current, socket = socketRef.current;
     if (!pane || !socket?.connected || !activeRef.current || !presentedRef.current || chatViewRef.current || modalOpen()
@@ -2963,7 +2951,6 @@ export function PaneTerminal({
           pageScroll={chatView ? undefined : pageScroll}
           lineScroll={chatView ? undefined : lineScroll}
           onApplicationPage={sendApplicationPage}
-          onApplicationScroll={sendApplicationScroll}
           enabled={presented && connected && outputReady && !chatView && !held && !ended && !released && !unsupported}
           interactive={!observing && !secretActive && !viewportSearching} search={searchState} onError={setInputError} />}
         {paneId !== null && chatView && (

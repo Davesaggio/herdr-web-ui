@@ -16,9 +16,9 @@ function fixture(mirrored = true, adopted = true, omoQuestion = false, drag = fa
     drag: () => drag, pan: () => pan, adopted: () => adopted, mirrored: () => mirrored,
     scroll: (count) => lines.push(count),
   });
-  const wheel = (deltaY: number, isTrusted = true, ctrlKey = false, shiftKey = false) => {
+  const wheel = (deltaY: number, isTrusted = true, ctrlKey = false, shiftKey = false, deltaX = 0) => {
     let prevented = false;
-    const result = handle({ deltaY, isTrusted, ctrlKey, shiftKey,
+    const result = handle({ deltaX, deltaY, isTrusted, ctrlKey, shiftKey,
       preventDefault() { prevented = true; },
     } as WheelEvent);
     return { result, prevented };
@@ -61,6 +61,13 @@ describe("terminal mirror wheel", () => {
     f.wheel(-120, true, true);
     f.wheel(-120, true, false, true);
     expect(f.lines).toEqual([]);
+  });
+
+  test("a sideways wheel leaves a mirror's wide grid to the browser's own pan", () => {
+    const f = fixture();
+    expect(f.wheel(0, true, false, false, 120)).toEqual({ result: false, prevented: false });
+    expect(f.lines).toEqual([]);
+    expect(f.cleared()).toBe(false);
   });
 
   test("observer grids and selecting drags retain their existing routing", () => {

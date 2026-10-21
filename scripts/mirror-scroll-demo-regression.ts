@@ -69,7 +69,6 @@ const state = (page: Page) => page.evaluate(() => {
   const { inputs, offsets, reads, offset } = (window as FixtureWindow).mirrorFixture;
   return { inputs, offsets, reads, offset };
 });
-const wheelReports = async (page: Page) => (await state(page)).inputs.map((frame) => frame.text ?? "").join("");
 const app = mkdtempSync(join(tmpdir(), "herdr-mirror-scroll-demo-"));
 
 try {
@@ -116,22 +115,12 @@ try {
           if (kind === "native") {
             await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 6);
             assert.deepEqual((await state(page)).inputs, [], "native history never sends typing");
-          } else if (kind === "pi") {
-            await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.inputs.length > 0);
-            assert.equal(await wheelReports(page), "\x1b[<64;1;1M".repeat(2), "Pi receives upward wheel reports at the chosen speed");
-            assert.deepEqual((await state(page)).offsets, [], "Pi's empty native history is not scrolled");
-          } else {
-            await settled(page);
-            assert.deepEqual((await state(page)).inputs, [], "unknown full-screen programs receive no guessed input");
-          }
-          if (kind !== "other") {
-            const before = await state(page);
             await page.mouse.wheel(0, 120);
-            await page.waitForFunction(({ native, count }) => {
-              const s = (window as FixtureWindow).mirrorFixture;
-              return native ? s.offset === 0 : s.inputs.length > count;
-            }, { native: kind === "native", count: before.inputs.length });
-            if (kind === "pi") assert.ok((await wheelReports(page)).endsWith("\x1b[<65;1;1M".repeat(2)), "downward wheel keeps its direction");
+            await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 0);
+          } else {
+            // a mirror carries no mouse modes: nothing says the program reads wheel reports, Pi's included
+            await settled(page);
+            assert.deepEqual((await state(page)).inputs, [], `${kind}: a program's own screen receives no guessed input`);
           }
 
           await page.setViewportSize({ width: 390, height: 844 });
@@ -144,12 +133,9 @@ try {
           await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
           await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + 150 }] });
           await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-          if (kind !== "other") {
-            await page.waitForFunction(({ native, count }) => {
-              const s = (window as FixtureWindow).mirrorFixture;
-              return native ? s.offset > 0 : s.inputs.length > count;
-            }, { native: kind === "native", count: beforeTouch.inputs.length });
-            if (kind === "pi") assert.ok((await wheelReports(page)).endsWith("\x1b[<64;1;1M"), "phone swipe reaches Pi's transcript");
+          if (kind === "native") {
+            await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset > 0);
+            assert.deepEqual((await state(page)).inputs, beforeTouch.inputs, "touch on native history never sends typing");
           } else {
             await settled(page);
             assert.deepEqual((await state(page)).inputs, [], "touch also leaves unknown applications alone");
@@ -171,27 +157,6 @@ try {
           await page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop < 80);
           assert.deepEqual((await state(page)).inputs, beforePan.inputs, "local wheel pan sends no application input");
           assert.deepEqual((await state(page)).offsets, beforePan.offsets, "local wheel pan leaves shared history alone");
-
-          // A swipe that starts at the grid's top edge travels history until the finger turns back
-          // and pans the grid; lifting it then sends no half step of the history travel. Pi only:
-          // its reports go out inside touchend, while native history is written after it.
-          if (kind === "pi") {
-            await terminal.evaluate((node) => { node.scrollTop = 0; });
-            assert.equal(await terminal.evaluate((node) => node.scrollTop), 0, "the oversized grid starts at its top edge");
-            // one touch step: three of the fixture's 40 rows, as herdr scrolls three lines a report
-            const step = await page.evaluate(() => document.querySelector(".pane-frame.is-current .xterm-screen")!.getBoundingClientRect().height / 40 * 3);
-            const beforeTurn = await state(page);
-            const turn = await context.newCDPSession(page);
-            const tx = panBox.x + panBox.width / 2, ty = panBox.y + 100;
-            await turn.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: tx, y: ty }] });
-            await turn.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: tx, y: ty + step * 0.75 }] });
-            await turn.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: tx, y: ty + step * 0.75 - 40 }] });
-            await turn.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-            await turn.detach();
-            await settled(page);
-            assert.ok(await terminal.evaluate((node) => node.scrollTop) > 0, "the turned finger pans the grid");
-            assert.deepEqual((await state(page)).inputs, beforeTurn.inputs, "a pan that took over the swipe sends no leftover history step");
-          }
 
           // A mirrored observer can pan its grid, but never changes the shared viewport or types.
           await page.evaluate(() => (window as FixtureWindow).mirrorFixture.sockets.at(-1)!.send(JSON.stringify({ type: "role", mode: "observe" })));

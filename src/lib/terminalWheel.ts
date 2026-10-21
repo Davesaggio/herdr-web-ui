@@ -29,6 +29,8 @@ export function attachTerminalWheel(term: Terminal, state: { readonly current: T
     // Observers pan locally; an interactive mirror can scroll herdr through the API.
     const mirrored = viewport.mirrored();
     if (viewport.adopted() && !mirrored) return false;
+    // a sideways wheel or trackpad on a mirror pans its wide grid in the browser, as before
+    if (mirrored && event.deltaY === 0) return false;
     if (term.hasSelection()) term.clearSelection();
     // OmO consumes wheel reports without acting while a question captures mouse input, so the
     // wheel moves herdr's history itself, as far as the reports below would: one three-line step
