@@ -93,7 +93,7 @@ try {
     try {
       for (const kind of ["native", "pi", "other"] as const) {
         const pane = kind === "pi" ? panes.cli : kind === "native" ? panes.shell : panes.web;
-        const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, locale: "en-US" });
+        const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, hasTouch: true, locale: "en-US" });
         try {
           await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", terminalWheelSpeed: 2, alertsOn: false })));
           const page = await context.newPage();
@@ -109,6 +109,8 @@ try {
           const terminal = page.locator(".pane-frame.is-current .pane-terminal");
           const box = await terminal.boundingBox();
           assert.ok(box);
+          // the 40-row grid must fit its pane here, or the wheel pans it locally instead (taller fonts need the height)
+          assert.ok(await terminal.evaluate((node) => node.scrollHeight <= node.clientHeight + 1), "the desktop grid fits its pane");
           await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
           await page.mouse.wheel(0, -120);
           if (kind === "native") {
@@ -169,6 +171,27 @@ try {
           await page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop < 80);
           assert.deepEqual((await state(page)).inputs, beforePan.inputs, "local wheel pan sends no application input");
           assert.deepEqual((await state(page)).offsets, beforePan.offsets, "local wheel pan leaves shared history alone");
+
+          // A swipe that starts at the grid's top edge travels history until the finger turns back
+          // and pans the grid; lifting it then sends no half step of the history travel. Pi only:
+          // its reports go out inside touchend, while native history is written after it.
+          if (kind === "pi") {
+            await terminal.evaluate((node) => { node.scrollTop = 0; });
+            assert.equal(await terminal.evaluate((node) => node.scrollTop), 0, "the oversized grid starts at its top edge");
+            // one touch step: three of the fixture's 40 rows, as herdr scrolls three lines a report
+            const step = await page.evaluate(() => document.querySelector(".pane-frame.is-current .xterm-screen")!.getBoundingClientRect().height / 40 * 3);
+            const beforeTurn = await state(page);
+            const turn = await context.newCDPSession(page);
+            const tx = panBox.x + panBox.width / 2, ty = panBox.y + 100;
+            await turn.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: tx, y: ty }] });
+            await turn.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: tx, y: ty + step * 0.75 }] });
+            await turn.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: tx, y: ty + step * 0.75 - 40 }] });
+            await turn.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+            await turn.detach();
+            await settled(page);
+            assert.ok(await terminal.evaluate((node) => node.scrollTop) > 0, "the turned finger pans the grid");
+            assert.deepEqual((await state(page)).inputs, beforeTurn.inputs, "a pan that took over the swipe sends no leftover history step");
+          }
 
           // A mirrored observer can pan its grid, but never changes the shared viewport or types.
           await page.evaluate(() => (window as FixtureWindow).mirrorFixture.sockets.at(-1)!.send(JSON.stringify({ type: "role", mode: "observe" })));

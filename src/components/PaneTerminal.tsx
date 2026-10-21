@@ -1715,6 +1715,8 @@ export function PaneTerminal({
       touchX = first.clientX;
       touchY = first.clientY;
       if (adopted() && (!scrollableMirror() || canPanTerminalGrid(host, delta))) {
+        // the pan owns the swipe now: history travel left from before it is not sent at the lift
+        touchPixels = 0;
         panned = true;
         host.scrollBy(across, delta);
         return;
