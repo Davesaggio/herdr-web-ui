@@ -404,6 +404,52 @@ describe("providers", () => {
     ]);
   });
 
+  it("prefers the official Antigravity CLI quota, including Gemini and third-party models", async () => {
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
+      token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
+    });
+    const argv = ["custom-agy", "--print", "/usage", "--output-format", "json", "--print-timeout", "30s"];
+    const calls: Array<{ argv: string[]; timeoutMs?: number }> = [];
+    const ctx: UsageContext = { ...context("win32"), env: { AGY_BIN: "custom-agy" }, async run(argv, timeoutMs) {
+      calls.push({ argv, timeoutMs });
+      return JSON.stringify({ status: "SUCCESS", command: { data: { groups: [{ buckets: [
+        { id: "gemini-weekly", remaining_fraction: 0.712, reset_time: "2026-10-04T00:00:00Z" },
+        { id: "gemini-5h", remaining_fraction: 1, reset_time: "2026-09-29T16:00:00Z" },
+        { id: "3p-weekly", remaining_fraction: 0.5 },
+        { id: "3p-5h", remaining_fraction: 0 },
+        { id: "gemini-5h" },
+        { id: "unknown", remaining_fraction: 0.5 },
+      ] }] } } });
+    } };
+    const [usage] = (await new UsageService(ctx, only("antigravity")).report()).providers;
+    expect(usage).toMatchObject({ problem: null, windows: [
+      { kind: "week", scope: null, used_percent: 28.8, resets_at: "2026-10-04T00:00:00.000Z", starts_at: null },
+      { kind: "session", scope: null, used_percent: 0, resets_at: "2026-09-29T16:00:00.000Z", starts_at: null },
+      { kind: "week", scope: "Other models", used_percent: 50, resets_at: null, starts_at: null },
+      { kind: "session", scope: "Other models", used_percent: 100, resets_at: null, starts_at: null },
+    ] });
+    expect(calls).toEqual([{ argv, timeoutMs: 35_000 }]);
+    expect(requests).toEqual([]);
+  });
+
+  it.each([
+    "not json",
+    JSON.stringify({ status: "ERROR" }),
+    JSON.stringify({ status: "SUCCESS", command: { data: { groups: [] } } }),
+    JSON.stringify({ status: "SUCCESS", command: { data: { groups: [{ buckets: [{ id: "gemini-5h" }] }] } } }),
+  ])("falls back to HTTP when Antigravity CLI output is unusable: %s", async (output) => {
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
+      token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
+    });
+    commands.set("agy --print /usage --output-format json --print-timeout 30s", output);
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { groups: [{ buckets: [
+      { bucketId: "3p-weekly", remainingFraction: 1 },
+    ] }] } });
+    const [usage] = (await new UsageService(context(), only("antigravity")).report()).providers;
+    expect(usage).toMatchObject({ problem: null, windows: [{ kind: "week", scope: "Other models", used_percent: 0 }] });
+    expect(requests).toHaveLength(1);
+  });
+
   it("reads Antigravity from its token file on Linux", async () => {
     write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
       token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
@@ -719,9 +765,14 @@ describe("bounded reads", () => {
     } finally { console.warn = warn; }
   });
 
+  it("bounds commands by their supplied timeout and keeps successful output", async () => {
+    expect(await runCommand([process.execPath, "-e", "setInterval(() => {}, 1000)"], 100)).toBeNull();
+    expect(await runCommand([process.execPath, "-e", "console.log('ok')"], 5000)).toBe("ok");
+  });
+
   it("gives up on a command whose output passes MAX_READ_BYTES", async () => {
-    expect(await runCommand(["head", "-c", String(MAX_READ_BYTES + 1), "/dev/zero"])).toBeNull();
-    expect(await runCommand(["head", "-c", "3", "/dev/zero"])).toBe("\0\0\0");
+    expect(await runCommand([process.execPath, "-e", `process.stdout.write(Buffer.alloc(${MAX_READ_BYTES + 1}))`])).toBeNull();
+    expect(await runCommand([process.execPath, "-e", "process.stdout.write(Buffer.alloc(3))"])).toBe("\0\0\0");
   });
 });
 
