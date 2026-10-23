@@ -9,7 +9,7 @@
  * Read only, on purpose: an OAuth token is never refreshed here. Claude, Codex, Cursor and Grok
  * rotate refresh tokens, so a refresh the CLI did not make logs the CLI out. An expired token is
  * reported as `expired` instead; the CLI refreshes its own file the next time it runs.
- * Antigravity's quota is preferably read through its official CLI, which owns its authentication.
+ * Antigravity uses its official CLI only when HTTP omits Gemini quotas; the CLI owns its authentication.
  *
  * Nothing runs in the background: a provider is asked only when a client asks this server, at
  * most every FRESH_MS unless the client forces it, which is still limited to one ask per
@@ -651,12 +651,6 @@ const antigravity: UsageProvider = {
     return keychainOrFile(await fromKeychain(ctx, "gemini", ["antigravity"], antigravitySignIn), file, "keychain");
   },
   async read(ctx, signIn) {
-    // The CLI includes Gemini quotas that the direct endpoint can omit for the same account.
-    const cli = record(parseJson(await ctx.run([ctx.env["AGY_BIN"] || "agy", "--print", "/usage", "--output-format", "json", "--print-timeout", "30s"], 35_000).catch(() => null)));
-    if (cli["status"] === "SUCCESS") {
-      const windows = antigravityWindows(record(record(cli["command"])["data"])["groups"]);
-      if (windows.length > 0) return { plan: null, windows };
-    }
     const init: RequestInit = {
       method: "POST",
       headers: { authorization: `Bearer ${signIn.token}`, accept: "application/json", "content-type": "application/json", "user-agent": "antigravity" },
@@ -669,7 +663,15 @@ const antigravity: UsageProvider = {
       if (error instanceof UsageHttpError && (error.status === 401 || error.status === 403 || error.status === 429)) throw error;
       body = await requestJson(ctx, "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", init);
     }
-    return { plan: null, windows: antigravityWindows(body["groups"] ?? record(body["response"])["groups"]) };
+    const windows = antigravityWindows(body["groups"] ?? record(body["response"])["groups"]);
+    if (windows.some((window) => window.scope === null)) return { plan: null, windows };
+    // Only pay the CLI startup cost when HTTP omits Gemini quotas for this account.
+    const cli = record(parseJson(await ctx.run(["agy", "--print", "/usage", "--output-format", "json", "--print-timeout", "30s"], 35_000).catch(() => null)));
+    if (cli["status"] === "SUCCESS") {
+      const cliWindows = antigravityWindows(record(record(cli["command"])["data"])["groups"]);
+      if (cliWindows.length > 0) return { plan: null, windows: cliWindows };
+    }
+    return { plan: null, windows };
   },
 };
 

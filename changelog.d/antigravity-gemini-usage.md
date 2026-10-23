@@ -1,3 +1,3 @@
 ### Fixed
-- Antigravity usage reads the official CLI's quota summary when available, so Gemini limits
-  appear alongside Claude and GPT limits even when the direct endpoint omits them.
+- Antigravity usage consults the official CLI only when the HTTP quota summary omits Gemini
+  limits, keeping complete HTTP readings fast while recovering missing Gemini quotas.
