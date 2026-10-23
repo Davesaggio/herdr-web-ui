@@ -409,13 +409,45 @@ describe("providers", () => {
     ]);
   });
 
-  it("prefers the official Antigravity CLI quota, including Gemini and third-party models", async () => {
+  it.each(["gemini-5h", "gemini-weekly"])("never starts the CLI when HTTP includes %s", async (bucketId) => {
     write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
       token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
     });
-    const argv = ["custom-agy", "--print", "/usage", "--output-format", "json", "--print-timeout", "30s"];
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { groups: [{ buckets: [
+      { bucketId, remainingFraction: 0.75 },
+    ] }] } });
+    let calls = 0;
+    const ctx: UsageContext = { ...context(), async run() { calls++; return null; } };
+    const [usage] = (await new UsageService(ctx, only("antigravity")).report()).providers;
+    expect(usage).toMatchObject({ problem: null, windows: [{ scope: null, used_percent: 25 }] });
+    expect(calls).toBe(0);
+    expect(requests).toHaveLength(1);
+  });
+
+  it.each([401, 403, 429])("preserves HTTP %s handling without starting the CLI", async (status) => {
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
+      token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
+    });
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { status });
+    let calls = 0;
+    const ctx: UsageContext = { ...context(), async run() { calls++; return null; } };
+    const [usage] = (await new UsageService(ctx, only("antigravity")).report()).providers;
+    expect(usage!.problem).toBe(status === 429 ? "rate_limited" : "expired");
+    expect(calls).toBe(0);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("uses the official CLI only after HTTP omits Gemini quotas", async () => {
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
+      token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
+    });
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { groups: [{ buckets: [
+      { bucketId: "3p-weekly", remainingFraction: 1 },
+    ] }] } });
+    const argv = ["agy", "--print", "/usage", "--output-format", "json", "--print-timeout", "30s"];
     const calls: Array<{ argv: string[]; timeoutMs?: number }> = [];
-    const ctx: UsageContext = { ...context("win32"), env: { AGY_BIN: "custom-agy" }, async run(argv, timeoutMs) {
+    const ctx: UsageContext = { ...context("win32"), async run(argv, timeoutMs) {
+      expect(requests).toHaveLength(1);
       calls.push({ argv, timeoutMs });
       return JSON.stringify({ status: "SUCCESS", command: { data: { groups: [{ buckets: [
         { id: "gemini-weekly", remaining_fraction: 0.712, reset_time: "2026-10-04T00:00:00Z" },
@@ -434,19 +466,20 @@ describe("providers", () => {
       { kind: "session", scope: "Other models", used_percent: 100, resets_at: null, starts_at: null },
     ] });
     expect(calls).toEqual([{ argv, timeoutMs: 35_000 }]);
-    expect(requests).toEqual([]);
+    expect(requests).toHaveLength(1);
   });
 
   it.each([
+    null,
     "not json",
     JSON.stringify({ status: "ERROR" }),
     JSON.stringify({ status: "SUCCESS", command: { data: { groups: [] } } }),
     JSON.stringify({ status: "SUCCESS", command: { data: { groups: [{ buckets: [{ id: "gemini-5h" }] }] } } }),
-  ])("falls back to HTTP when Antigravity CLI output is unusable: %s", async (output) => {
+  ])("keeps the HTTP reading when Antigravity CLI output is unusable: %s", async (output) => {
     write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), {
       token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() },
     });
-    commands.set("agy --print /usage --output-format json --print-timeout 30s", output);
+    if (output !== null) commands.set("agy --print /usage --output-format json --print-timeout 30s", output);
     replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { groups: [{ buckets: [
       { bucketId: "3p-weekly", remainingFraction: 1 },
     ] }] } });
