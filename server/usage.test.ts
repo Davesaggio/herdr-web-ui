@@ -417,7 +417,7 @@ describe("providers", () => {
       { bucketId, remainingFraction: 0.75 },
     ] }] } });
     let calls = 0;
-    const ctx: UsageContext = { ...context(), async run() { calls++; return null; } };
+    const ctx: UsageContext = { ...context(), async run(argv) { if (argv[0] === "agy") calls++; return null; } };
     const [usage] = (await new UsageService(ctx, only("antigravity")).report()).providers;
     expect(usage).toMatchObject({ problem: null, windows: [{ scope: null, used_percent: 25 }] });
     expect(calls).toBe(0);
@@ -430,7 +430,7 @@ describe("providers", () => {
     });
     replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { status });
     let calls = 0;
-    const ctx: UsageContext = { ...context(), async run() { calls++; return null; } };
+    const ctx: UsageContext = { ...context(), async run(argv) { if (argv[0] === "agy") calls++; return null; } };
     const [usage] = (await new UsageService(ctx, only("antigravity")).report()).providers;
     expect(usage!.problem).toBe(status === 429 ? "rate_limited" : "expired");
     expect(calls).toBe(0);
